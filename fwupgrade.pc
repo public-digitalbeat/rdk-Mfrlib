@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include/
+Name: FWUpgradeLibs
+Description: FW A/B upgrade Libraries
+Requires:
+Version: 0.0.0
+Libs: -L${libdir} -lfwupgrade
+Cflags: -I${includedir}

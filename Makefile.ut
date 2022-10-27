@@ -1,0 +1,27 @@
+#CC = g++
+CPPFILES    := $(wildcard *.cpp)
+RM          := rm -rf
+CXXFLAGS    = -std=c++1y  -g -fPIC -D_REENTRANT -Wall
+#SOVER       := 0.0.0
+#LIBNAME     := RDKMfrLib
+#LIBNAMEFULL := lib$(LIBNAME).so.$(SOVER)
+#OBJS        := $(patsubst %.c,%.o,$(wildcard *.c))
+#OBJS        := ut_mfrlib.o aml_upgrade.o backed_block.o bootloader_message.o mfrlib.o output_file.o sparse.o sparse_crc32.o sparse_err.o sparse_read.o
+OBJS        := $(patsubst %.c,%.o,$(wildcard *.c)) $(CPPFILES:.cpp=.o)
+#OBJS         := ut_mfrlib.o bootloader_message.o
+
+#library: $(OBJS)
+#	@echo "Building $(LIBNAMEFULL) ...."
+#	$(CC) $(OBJS) $(CFLAGS) -shared -Wl,-soname,lib$(LIBNAME).so -o $(LIBNAMEFULL)
+
+ut_mfrlib: $(OBJS)
+	@echo "Building ut_mfrlib ...."
+	$(CC) -o ut_mfrlib $(OBJS) $(CFLAGS) -lz
+ 
+%.o: %.c
+	@echo "Building $@ ...."
+	$(CC) -c $< $(CFLAGS) -o $@
+
+clean:
+	@echo "Make clean ..."
+	rm -f *.o *.so ut_mfrlib
