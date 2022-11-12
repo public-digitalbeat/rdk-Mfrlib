@@ -1,16 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
 
 #include "mfrApi.h"
 #include "aml_upgrade.h"
+#include "mfr_temperature.h"
 
 #define MAX_BUF_LEN 255
 #define SIZE 50
-#define MAC_ADDRESS_SIZE 12
+#define MAC_ADDRESS_SIZE 17
 #define SERIAL_MAX_SIZE 16
+//max command size should be increased if any command contains more than 100 chars.
 #define MAX_COMMAND_SIZE 100
-
+#define STR_SIZE 9
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 //#define DEBUG
@@ -23,7 +27,10 @@ const char defaultProductClass[] = "RDK4-Firebolt";
 const char defaultSerialNumber[] = "0000000000000000";
 const char defaultHardwareVersion[] = "AH212";
 const char defaultSoftwareVersion[] = "0.1";
-const char defaultMacAddress[] = "000000000000";
+const char defaultMacAddress[] = "00:00:00:00:00:00";
+
+static int mfrTemperatureHigh = 100;
+static int mfrTemperatureCritical = 110;
 
 static const struct amlSocFamily_t {
 	uint32_t idMask;
@@ -44,6 +51,23 @@ static const struct amlSocFamily_t {
 	{ 0x3a0a03, "MBX", "S4D",   "S905Y4D" },
 	{ 0x3a0c04, "MBX", "C3",    "S905C3" },
 };
+
+static int mfr_sysfs_get_sysfs_str(const char *path, char *valstr, int size)
+{
+    int fd;
+    fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        memset(valstr, 0, size);
+        read(fd, valstr, size - 1);
+        valstr[strlen(valstr)] = '\0';
+        close(fd);
+    } else {
+        printf("unable to open file %s,err: %s\n", path, strerror(errno));
+        sprintf(valstr, "%s", "fail");
+        return -1;
+    };
+    return 0;
+}
 
 char* getChipsetFromId(char *pSlNo)
 {
@@ -92,7 +116,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     {
     case mfrSERIALIZED_TYPE_MANUFACTURER:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag MANUFACTURE from /etc/device.properties */
@@ -120,7 +144,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_MANUFACTUREROUI:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         //sprintf(cmd, "ifconfig | grep `ifconfig -a | sed 's/[ \t].*//;/^\(lo\|\)$/d' | head -n1` | tr -s ' ' | cut -d ' ' -f5 | sed -e 's/://g'");
         sprintf(cmd, "ifconfig | grep eth0 | awk '{print $5}' | sed -e 's/://g'"); //ethernet or wi-fi need?
@@ -146,7 +170,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_MODELNAME:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag MODEL_NUM from /etc/device.properties */
         sprintf(cmd, "cat /etc/device.properties | grep MODEL_NUM | sed -e 's/.*=//g'");
@@ -172,7 +196,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_DESCRIPTION:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag DEVICE_TYPE from /etc/device.properties */
         sprintf(cmd, "cat /etc/device.properties | grep DEVICE_TYPE | sed -e 's/.*=//g'");
@@ -199,7 +223,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_PRODUCTCLASS:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag DEVICE_NAME from /etc/device.properties */
         sprintf(cmd, "cat /etc/device.properties | grep DEVICE_NAME | sed -e 's/.*=//g'");
@@ -225,7 +249,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_SERIALNUMBER:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag Serial from /proc/cpuinfo */
         //sprintf(cmd, "cat /proc/cpuinfo | grep Serial | sed -e 's/.*: //g'");
@@ -253,7 +277,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_HARDWAREVERSION:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag Revision from /proc/cpuinfo */
         sprintf(cmd, "cat /proc/cpuinfo | grep Hardware | sed -e 's/.*: //g'");
@@ -279,7 +303,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_SOFTWAREVERSION:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
         /* retrieving tag BUILD_VERSION from /etc/device.properties */
         sprintf(cmd, "cat /etc/device.properties | grep BUILD_VERSION | sed -e 's/.*=//g'");
@@ -307,8 +331,67 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_MOCAMAC:
     case mfrSERIALIZED_TYPE_HDMIHDCP:
     case mfrSERIALIZED_TYPE_PDRIVERSION:
+        data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
+        memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
+        strcpy(data->buf, "Not implemented");
+        break;
     case mfrSERIALIZED_TYPE_WIFIMAC:
+        data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
+        memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
+        memset(buffer, 0, MAX_BUF_LEN);
+
+        sprintf(cmd, "ifconfig | grep wlan0 | awk '{print $5}' "); //ethernet or wi-fi need?
+
+        if ((fp = popen(cmd, "r")) == NULL)
+        {
+            mfrlib_log("popen failed.");
+            printf("popen failed.");
+            strcpy(data->buf, defaultMacAddress);
+            data->bufLen = strlen(data->buf);
+        }
+        if (fp)
+        {
+            printf("WIFI DEVICEMAC fp 5.\n\n");
+            fgets(buffer, sizeof(buffer), fp);
+            if (strlen(buffer) > 1) {
+                strncpy(data->buf, buffer, MAC_ADDRESS_SIZE);
+            } else {
+                strcpy(data->buf, defaultMacAddress);
+            }
+            data->bufLen = MAC_ADDRESS_SIZE;
+            pclose(fp);
+        }
+        mfrlib_log("Wifi MAC Address = %s\t len=%d\n", data->buf, data->bufLen);
+        break;
     case mfrSERIALIZED_TYPE_BLUETOOTHMAC:
+        data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
+        memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
+        memset(buffer, 0, MAX_BUF_LEN);
+
+        sprintf(cmd, "hciconfig | grep \"BD Address\" | awk '{ print $3}'");
+
+        if ((fp = popen(cmd, "r")) == NULL)
+        {
+            mfrlib_log("popen failed.");
+            strcpy(data->buf, defaultMacAddress);
+            data->bufLen = strlen(data->buf);
+        }
+        if (fp)
+        {
+            fgets(buffer, sizeof(buffer), fp);
+            if (strlen(buffer) > 1) {
+                strncpy(data->buf, buffer, MAC_ADDRESS_SIZE);
+            } else {
+                strcpy(data->buf, defaultMacAddress);
+            }
+            data->bufLen = MAC_ADDRESS_SIZE;
+            pclose(fp);
+        }
+        mfrlib_log("Bluetooth MAC Address = %s\t len=%d\n", data->buf, data->bufLen);
+
+        break;
     case mfrSERIALIZED_TYPE_MAX:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         strcpy(data->buf, "XXXX");
@@ -317,14 +400,14 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
     case mfrSERIALIZED_TYPE_DEVICEMAC:
         data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
         memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-        memset(cmd, 0, sizeof(char) * 100);
+        memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
         memset(buffer, 0, MAX_BUF_LEN);
-        //sprintf(cmd, "ifconfig | grep `ifconfig -a | sed 's/[ \t].*//;/^\(lo\|\)$/d' | head -n1` | tr -s ' ' | cut -d ' ' -f5 | sed -e 's/://g'");
-#ifndef USE_RDKSERVICES
-        sprintf(cmd,"ifconfig | grep `ifconfig -a | sed 's/[ \t].*//;/^\(lo\\|\\)$/d' | head -n1` | tr -s ' ' | cut -d ' ' -f5 | sed -e 's/://g'");
-#else
-        sprintf(cmd, "ifconfig | grep eth0 | awk '{print $5}' | sed -e 's/://g'"); //ethernet or wi-fi need?
-#endif
+        /* on AH212 , if USE_RDKSERVICES is defined, it returns MAC of dummy0 interface */
+//#ifndef USE_RDKSERVICES
+//       sprintf(cmd, "ifconfig | grep `ifconfig -a | sed 's/[ \t].*//;/^\(lo\\|\\)$/d' | head -n1` | tr -s ' ' | cut -d ' ' -f5");
+//#else
+       sprintf(cmd, "ifconfig | grep eth0 | awk '{print $5}'"); //ethernet or wi-fi need?
+//#endif
         if ((fp = popen(cmd, "r")) == NULL)
         {
             mfrlib_log("popen failed.");
@@ -344,10 +427,11 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
         }
         mfrlib_log("MAC Address = %s\t len=%d\n", data->buf, data->bufLen);
         break;
+
 	case mfrSERIALIZED_TYPE_CHIPSETINFO:
 		data->buf = (char *)malloc(sizeof(char) * MAX_BUF_LEN);
 		memset(data->buf, '\0', sizeof(char) * MAX_BUF_LEN);
-		memset(cmd, 0, sizeof(char) * 100);
+		memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
 		memset(buffer, 0, MAX_BUF_LEN);
 		/* retrieving tag Revision from /proc/cpuinfo */
 		sprintf(cmd, "cat /proc/cpuinfo | grep Hardware | sed -e 's/.*: //g'");
@@ -366,7 +450,7 @@ mfrError_t mfrGetSerializedData(mfrSerializedType_t param, mfrSerializedData_t *
 				strncpy(data->buf, buffer, strlen(buffer) - 1);
 				strncat(data->buf, " ", MAX_BUF_LEN);
 				/* Extract Serial Number and map chipset. */
-				memset(cmd, 0, sizeof(char) * 100);
+				memset(cmd, 0, sizeof(char) * MAX_COMMAND_SIZE);
 				memset(buffer, 0, MAX_BUF_LEN);
 				/* retrieving tag Serial from /proc/cpuinfo */
 				sprintf(cmd, "cat /proc/cpuinfo | grep Serial | sed -e 's/.*: //g'");
@@ -438,5 +522,45 @@ mfrError_t mfrFWUpgradeInit(void)
 }
 mfrError_t mfrFWUpgradeTerm(void)
 {
+    return mfrERR_NONE;
+}
+
+mfrError_t mfrGetTemperature(mfrTemperatureState_t *state, int *temperatureValue, int *wifiTemp)
+{
+    char strTemp[STR_SIZE];
+    char tempFile[SIZE];
+    float temp_value;
+    mfrError_t ret;
+
+    if(state != NULL && temperatureValue != NULL && wifiTemp != NULL) {
+        sprintf(tempFile, "%s","/sys/class/thermal/thermal_zone0/temp");
+        mfr_sysfs_get_sysfs_str(tempFile, strTemp, sizeof(strTemp));
+        temp_value = atof(strTemp);
+        temp_value = temp_value/1000;
+
+        *temperatureValue = temp_value;
+        *wifiTemp = 0;
+        *state = (temp_value > mfrTemperatureHigh) ? mfrTEMPERATURE_HIGH : mfrTEMPERATURE_NORMAL;
+        *state = (temp_value > mfrTemperatureCritical) ? mfrTEMPERATURE_CRITICAL : *state;
+        ret = mfrERR_NONE;
+    }
+    else {
+        ret = mfrERR_INVALID_PARAM;
+    }
+
+    return ret;
+}
+mfrError_t mfrSetTempThresholds(int tempHigh, int tempCritical)
+{
+    mfrTemperatureHigh = tempHigh;
+    mfrTemperatureCritical = tempCritical;
+
+    return mfrERR_NONE;
+}
+mfrError_t mfrGetTempThresholds(int *tempHigh, int *tempCritical)
+{
+    *tempHigh = mfrTemperatureHigh;
+    *tempCritical = mfrTemperatureCritical;
+
     return mfrERR_NONE;
 }
